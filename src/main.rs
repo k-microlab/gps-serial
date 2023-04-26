@@ -12,34 +12,46 @@ fn main() {
         .open()
         .expect(&format!("Unable to open serial port '{}'", port.port_name));
 
-    let mut buffer = Vec::new();
-    let mut last = 0;
-    let mut serial_buf = [0u8; 1024];
+    let mut buffer = [0u8; 1024];
+    let mut pos = 0;
 
     let mut parser = NmeaParser::new();
+
+    let mut serial_buf = [0u8; 1024];
 
     loop {
         match port.read(serial_buf.as_mut_slice()) {
             Ok(t) => {
                 let slice = &serial_buf[..t];
-                let len = buffer.len();
-                buffer.extend_from_slice(slice);
-                if let Some(idx) = slice.iter().position(|c| *c == b'\n') {
-                    let line = String::from_utf8_lossy(&buffer[last..(len + idx)]);
-                    last = len + idx + 1;
 
-                    if let Ok(sentence) = parser.parse_sentence(&line) {
-                        match sentence {
-                            ParsedMessage::Rmc(rmc) => {
-                                if let Some(timestamp) = rmc.timestamp {
-                                    println!("Time:    {}", timestamp);
+                for b in slice { // На контроллере будет просто чтение по одному байту
+                    if *b != b'\n' {
+                        if *b == b'\r' {
+                            let end = pos;
+                            pos = 0;
+                            let line = core::str::from_utf8(&buffer[0..end]).unwrap();
+                            if line.starts_with('$') {
+                                // println!("Line:    {:?}", line);
+                                if let Ok(sentence) = parser.parse_sentence(line) {
+                                    println!("Line:    {:?}", sentence);
+                                    match sentence {
+                                        ParsedMessage::Rmc(rmc) => {
+                                            if let Some(timestamp) = rmc.timestamp {
+                                                // println!("Time:    {}", timestamp);
+                                            }
+                                        },
+                                        _ => {}
+                                    }
                                 }
-                            },
-                            _ => {}
+                            } else {
+                                eprintln!("Broken:  {:?}", line);
+                            }
+                        } else {
+                            buffer[pos] = *b;
+                            pos += 1;
                         }
                     }
                 }
-                // std::io::stdout().write_all(&serial_buf[..t]).unwrap()
             },
             Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => (),
             other => {
